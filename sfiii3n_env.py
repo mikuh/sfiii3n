@@ -77,10 +77,14 @@ class Sfiii3nEnv(gym.Env):
 
 if __name__ == '__main__':
     env = Sfiii3nEnv()
-
+    import time
     while True:
         action = np.random.choice(list(range(env.action_space.n)), 1)[0]
         observation, reward, done, _ = env.step(action)
+        # print(observation.shape)
+        if observation.shape != (224, 384, 3):
+            print(observation.shape, reward, done)
+            time.sleep(2)
         # time.sleep(1)
         if done > 0:
             env.reset(done)

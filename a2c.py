@@ -3,6 +3,7 @@ import numpy as np
 import gym
 import random
 from sfiii3n_env import Sfiii3nEnv
+import time
 
 
 def softmax(x):
@@ -76,8 +77,9 @@ class Agent(object):
         self.action_size = self.env.action_space.n
         self.a2c = model
         self.n_step = 1
+        self.repeat_sampling = 1
         self.gamma = 0.99
-        self.rollout = 4096
+        self.rollout = 512
         self.batch_size = 256
         self.lr = 0.001
         self.epsilon = 0.5
@@ -88,11 +90,11 @@ class Agent(object):
         self.best_score = 0
 
     def get_action(self, state):
-        state = tf.convert_to_tensor([state], dtype=tf.float32)
-        policy, _ = self.a2c(state)
+        # state = tf.convert_to_tensor([state], dtype=tf.float32)
+        policy, _ = self.a2c(np.array([state]))
         policy = np.array(policy)[0]
         self.epsilon = 1 / (self.episode * 0.1 + 2)
-        if random.random() < self.epsilon:
+        if random.random() < self.epsilon or True:
             action = np.random.choice(self.action_size)
         else:
             # where_are_nan = np.isnan(policy)
@@ -102,26 +104,31 @@ class Agent(object):
         return action
 
     def collect_replay_buffer(self, state):
+        state = state.astype(np.float32)
         state_list, next_state_list, reward_list, done_list, action_list = [], [], [], [], []
 
         for _ in range(self.rollout):
             action = self.get_action(state)
             next_state, reward, done, _ = self.env.step(action)
+            if next_state.shape != (224, 384, 3):
+                next_state = state
+            next_state = next_state.astype(np.float32)
 
             self.score += reward
 
-
             state_list.append(state)
             next_state_list.append(next_state)
-            reward_list.append(reward)
-            done_list.append(done)
-            action_list.append(action)
+            reward_list.append(np.float32(reward))
+            done_list.append(np.float32(1) if done > 0 else np.float32(0))
+            action_list.append(np.int32(action))
 
             state = next_state
 
             if done > 0:
-                print("Episode %s, Score: %s" % (self.episode, self.score))
+                print("Episode %s, Score: %s, at: %s" % (
+                self.episode, self.score, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
                 state = self.env.reset(done)
+                state = state.astype(np.float32)
                 self.episode += 1
                 if self.episode % 100 == 0:
                     # self.best_score = self.score
@@ -153,7 +160,8 @@ class Agent(object):
         init_state = self.env.init_state
         while self.episode < max_episode:
             _state, _next_state, _reward, _done, _action = self.collect_replay_buffer(init_state)
-            for _ in range(20):
+            print("Start update parameters..., at:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+            for _ in range(self.repeat_sampling):
                 sample_range = np.arange(self.rollout - self.n_step + 1)
                 np.random.shuffle(sample_range)
                 sample_idx = sample_range[:self.batch_size]
@@ -168,20 +176,18 @@ class Agent(object):
                 with tf.GradientTape() as tape:
                     tape.watch(a2c_variable)
 
-                    _, current_value = self.a2c(tf.convert_to_tensor(state, dtype=tf.float32))
-                    _, next_value = self.a2c(tf.convert_to_tensor(next_state, dtype=tf.float32))
+                    _, current_value = self.a2c(state)
+                    _, next_value = self.a2c(next_state)
                     current_value, next_value = tf.squeeze(current_value), tf.squeeze(next_value)
 
-
                     target = tf.stop_gradient(
-                        self.gamma * (1 - tf.convert_to_tensor(done, dtype=tf.float32)) * next_value + tf.convert_to_tensor(
-                            reward, dtype=tf.float32))
+                        self.gamma * (1 - np.array(done)) * np.array(next_value) + np.array(reward))
                     value_loss = tf.reduce_mean(tf.square(target - current_value) * 0.5)
 
-                    policy, _ = self.a2c(tf.convert_to_tensor(state, dtype=tf.float32))
+                    policy, _ = self.a2c(state)
                     # policy = tf.nn.softmax(policy, axis=None, name=None)
                     entropy = tf.reduce_mean(- policy * tf.math.log(policy + 1e-8)) * 0.1
-                    action = tf.convert_to_tensor(action, dtype=tf.int32)
+                    # action = tf.convert_to_tensor(action, dtype=tf.int32)
                     onehot_action = tf.one_hot(action, self.action_size)
                     action_policy = tf.reduce_sum(onehot_action * policy, axis=1)
                     adv = tf.stop_gradient(target - current_value)
@@ -191,6 +197,8 @@ class Agent(object):
 
                 grads = tape.gradient(total_loss, a2c_variable)
                 self.opt.apply_gradients(zip(grads, a2c_variable))
+
+            print("Complete update. at: ", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
         self.a2c.save("my_model/")
 
