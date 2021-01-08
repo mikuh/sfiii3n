@@ -43,7 +43,7 @@ class Sfiii3nEnv(gym.Env):
             done = 2
         elif round_done:
             done = 3
-        reward = reward['P1'] - penalty
+        reward = reward['P1']
         # if done > 0:
         #     if self.env.expected_wins["P1"] == 2:
         #         reward += 1000

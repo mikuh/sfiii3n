@@ -79,22 +79,23 @@ class Agent(object):
         self.n_step = 1
         self.repeat_sampling = 1
         self.gamma = 0.99
-        self.rollout = 512
-        self.batch_size = 256
+        self.rollout = 128
+        self.batch_size = 128
         self.lr = 0.001
         self.epsilon = 0.5
         self.opt = tf.keras.optimizers.Adam(lr=self.lr)
         self.temperature = 1
         self.episode = 0
         self.score = 0
+        self.stages = 0
         self.best_score = 0
 
-    def get_action(self, state):
+    def get_action(self, state, is_train=True):
         # state = tf.convert_to_tensor([state], dtype=tf.float32)
         policy, _ = self.a2c(np.array([state]))
         policy = np.array(policy)[0]
-        self.epsilon = 1 / (self.episode * 0.1 + 2)
-        if random.random() < self.epsilon or True:
+        self.epsilon = 1 / (self.episode * 0.1 + 5)
+        if random.random() < self.epsilon and is_train:
             action = np.random.choice(self.action_size)
         else:
             # where_are_nan = np.isnan(policy)
@@ -125,14 +126,14 @@ class Agent(object):
             state = next_state
 
             if done > 0:
-                print("Episode %s, Score: %s, at: %s" % (
-                self.episode, self.score, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
+                self.episode += 1
+                print("Episode %s, Score: %s,  at: %s" % (
+                    self.episode, self.score, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
                 state = self.env.reset(done)
                 state = state.astype(np.float32)
-                self.episode += 1
                 if self.episode % 100 == 0:
                     # self.best_score = self.score
-                    self.a2c.save("my_model/")
+                    self.a2c.save("a2c_model/")
                 self.score = 0
 
         if self.n_step > 1:
@@ -152,15 +153,15 @@ class Agent(object):
                 dones.append(done)
 
                 actions.append(action)
-            return states, next_states, rewards, dones, actions
+            return states, next_states, rewards, dones, actions, state
 
-        return state_list, next_state_list, reward_list, done_list, action_list
+        return state_list, next_state_list, reward_list, done_list, action_list, state
 
     def learn(self, max_episode):
         init_state = self.env.init_state
         while self.episode < max_episode:
-            _state, _next_state, _reward, _done, _action = self.collect_replay_buffer(init_state)
-            print("Start update parameters..., at:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+            _state, _next_state, _reward, _done, _action, init_state = self.collect_replay_buffer(init_state)
+            # print("Start update parameters..., at:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
             for _ in range(self.repeat_sampling):
                 sample_range = np.arange(self.rollout - self.n_step + 1)
                 np.random.shuffle(sample_range)
@@ -198,21 +199,24 @@ class Agent(object):
                 grads = tape.gradient(total_loss, a2c_variable)
                 self.opt.apply_gradients(zip(grads, a2c_variable))
 
-            print("Complete update. at: ", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+            print("Complete parameters update at: ", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
         self.a2c.save("my_model/")
 
     def play(self):
-        obs = self.env.reset()
+        obs = self.env.init_state
+        obs = obs.astype(np.float32)
         score = 0
         while True:
-            action = self.get_action(obs)
+            action = self.get_action(obs, is_train=False)
             obs, rewards, dones, info = self.env.step(action)
+            obs = obs.astype(np.float32)
             score += rewards
             self.env.render()
             if dones > 0:
                 print("得分:", score)
-                obs = self.env.reset()
+                obs = self.env.reset(dones)
+                obs = obs.astype(np.float32)
                 score = 0
 
 
@@ -228,6 +232,6 @@ if __name__ == '__main__':
     agent.learn(1000000)
 
     # play
-    # a2c = tf.keras.models.load_model("best_model/")
-    # agent = Agent(model=a2c, gym_env_name="SpaceInvaders-ram-v0")
+    # a2c = tf.keras.models.load_model("a2c_model/")
+    # agent = Agent(model=a2c, env=env)
     # agent.play()
